@@ -23,10 +23,13 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
 ### 🚀 Usage
 
 #### Example usage for multiple files
+
 ```
 Convert-PcapToCsv -SourcePcapPaths @("C:\Users\xixia\Downloads\client_side1.pcap", "C:\Users\xixia\Downloads\client_side2.pcap") -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
+```
 
 #### Example usage for a source folder
+
 ``` 
 Convert-PcapToCsv -SourceFolderPath "C:\Users\xixia\Downloads\PcapFiles" -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
 ```
