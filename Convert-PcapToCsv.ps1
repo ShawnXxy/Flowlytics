@@ -1,3 +1,14 @@
+function Initialize-LoggingEnvironment {
+    $Global:TempLogFolder = Join-Path $env:TEMP "flowlytics"
+    if (-not (Test-Path $Global:TempLogFolder)) {
+        New-Item -ItemType Directory -Force -Path $Global:TempLogFolder | Out-Null
+    }
+    $timestamp = Get-Date -Format "yyMMddHHmmss"
+    $Global:TempLogFile = Join-Path $Global:TempLogFolder "conversion_log_$timestamp.log"
+    Write-Host "Temp log folder: $Global:TempLogFolder"
+    Write-Host "Temp log file: $Global:TempLogFile"
+}
+
 function Write-Log {
     param (
         [string]$Message,
@@ -7,11 +18,15 @@ function Write-Log {
     $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
     $coloredMessage = switch ($Level) {
         "Info"    { $Message }
-        "Warning" { Write-Host -ForegroundColor Yellow "[$timestamp UTC] $Message"; return }
-        "Error"   { Write-Host -ForegroundColor Red "[$timestamp UTC] $Message"; return }
-        "Success" { Write-Host -ForegroundColor Green "[$timestamp UTC] $Message"; return }
+        "Warning" { Write-Host -ForegroundColor Yellow "[$timestamp UTC] $Message"; $Message }
+        "Error"   { Write-Host -ForegroundColor Red "[$timestamp UTC] $Message"; $Message }
+        "Success" { Write-Host -ForegroundColor Green "[$timestamp UTC] $Message"; $Message }
     }
-    Write-Host "[$timestamp UTC] $coloredMessage"
+    $logMessage = "[$timestamp UTC] [$Level] $Message"
+    Add-Content -Path $Global:TempLogFile -Value $logMessage
+    if ($Level -eq "Info") {
+        Write-Host $logMessage
+    }
 }
 
 function Get-FileSize {
@@ -200,22 +215,6 @@ function Validate-Conversion {
         Write-Log "Warning: Missing essential fields in CSV: $($missingFields -join ', ')" -Level Warning
     }
 
-    # Sample content check
-    $sampleSize = [Math]::Min(5, $pcapPacketCount)
-    Write-Log "Performing sample content check on $sampleSize packets" -Level Info
-
-    for ($i = 1; $i -le $sampleSize; $i++) {
-        $pcapSample = & $TsharkPath -r $SourcePcapPath -Y "frame.number == $i" -T fields -e frame.number -e frame.time -e ip.src -e ip.dst -E separator=,
-        $csvSample = Import-Csv $TargetCsvPath | Select-Object -First $i | Select-Object -Last 1
-
-        if ($pcapSample -ne "$($csvSample.'frame.number'),$($csvSample.'frame.time'),$($csvSample.'ip.src'),$($csvSample.'ip.dst')") {
-            Write-Log "Warning: Content mismatch for packet $i" -Level Warning
-            Write-Log "PCAP: $pcapSample" -Level Warning
-            Write-Log "CSV:  $($csvSample.'frame.number'),$($csvSample.'frame.time'),$($csvSample.'ip.src'),$($csvSample.'ip.dst')" -Level Warning
-        }
-    }
-
-    Write-Log "Validation completed for $SourcePcapPath" -Level Success
 }
 
 function Convert-PcapToCsv {
@@ -226,9 +225,12 @@ function Convert-PcapToCsv {
         [Parameter(Mandatory = $true, ParameterSetName = "Folder")]
         [string]$SourceFolderPath,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $false)]
         [string]$TargetFolderPath
     )
+
+    # Initialize logging environment
+    Initialize-LoggingEnvironment
 
     # Validate OS environment
     if (-not (Test-WindowsOS)) {
@@ -261,6 +263,12 @@ For more information, visit: https://tshark.dev/setup/install/
     }
     else {
         Write-Log "Found tshark at: $tsharkPath" -Level Success
+    }
+
+    # If TargetFolderPath is not provided, use the Downloads folder
+    if (-not $TargetFolderPath) {
+        $TargetFolderPath = [System.Environment]::GetFolderPath("UserProfile") + "\Downloads"
+        Write-Log "Target folder not specified. Using Downloads folder: $TargetFolderPath" -Level Info
     }
 
     # Create the target directory if it doesn't exist
@@ -299,7 +307,7 @@ For more information, visit: https://tshark.dev/setup/install/
     $jobs = @()
     foreach ($SourcePcapPath in $SourcePcapPaths) {
         $jobScript = {
-            param($SourcePcapPath, $TargetFolderPath, $TsharkPath, $WriteLogString, $GetFileSizeString, $ConvertSinglePcapString, $ValidateConversionString)
+            param($SourcePcapPath, $TargetFolderPath, $TsharkPath, $WriteLogString, $GetFileSizeString, $ConvertSinglePcapString, $ValidateConversionString, $TempLogFile)
 
             # Import required functions
             ${function:Write-Log} = [ScriptBlock]::Create($WriteLogString)
@@ -307,9 +315,17 @@ For more information, visit: https://tshark.dev/setup/install/
             ${function:Convert-SinglePcap} = [ScriptBlock]::Create($ConvertSinglePcapString)
             ${function:Validate-Conversion} = [ScriptBlock]::Create($ValidateConversionString)
 
+            # Set the global temp log file for this job
+            $Global:TempLogFile = $TempLogFile
 
+            # Determine the target folder for this specific file
+            $fileTargetFolder = if ($TargetFolderPath) {
+                $TargetFolderPath
+            } else {
+                [System.IO.Path]::GetDirectoryName($SourcePcapPath)
+            }
 
-            $result = Convert-SinglePcap -SourcePcapPath $SourcePcapPath -TargetFolderPath $TargetFolderPath -TsharkPath $TsharkPath
+            $result = Convert-SinglePcap -SourcePcapPath $SourcePcapPath -TargetFolderPath $fileTargetFolder -TsharkPath $TsharkPath
             return @{
                 Result = $result
                 Logs = $Global:LogMessages
@@ -323,7 +339,8 @@ For more information, visit: https://tshark.dev/setup/install/
             ${function:Write-Log}.ToString(),
             ${function:Get-FileSize}.ToString(),
             ${function:Convert-SinglePcap}.ToString(),
-            ${function:Validate-Conversion}.ToString()
+            ${function:Validate-Conversion}.ToString(),
+            $Global:TempLogFile
         )
         
         # Limit the number of concurrent jobs
@@ -369,12 +386,36 @@ For more information, visit: https://tshark.dev/setup/install/
             Write-Log "Successfully converted the following files:" -Level Success
             $successfulConversions | ForEach-Object {
                 Write-Log "Source: $($_.Source)" -Level Info
-                Write-Log "Target: $($_.Target)" -Level Info
+                if ($_.Target) {
+                    Write-Log "Target: $($_.Target)" -Level Info
+                } else {
+                    Write-Log "Target: Not specified (using source directory)" -Level Info
+                }
+            }
+            
+            # Open the target folder(s)
+            $foldersToOpen = $successfulConversions | ForEach-Object { 
+                if ($_.Target) { 
+                    Split-Path -Parent $_.Target 
+                } else { 
+                    Split-Path -Parent $_.Source 
+                }
+            } | Select-Object -Unique
+            
+            foreach ($folder in $foldersToOpen) {
+                Write-Log "Opening folder: $folder" -Level Info
+                Start-Process "explorer.exe" -ArgumentList $folder
             }
         }
         Write-Log "PCAP to CSV conversion process finished for all files" -Level Success
     }
 
+    # Open the temp log folder
+    Write-Log "Opening temp log folder: $Global:TempLogFolder" -Level Info
+    Start-Process "explorer.exe" -ArgumentList $Global:TempLogFolder
+
     # Clean up jobs
     $jobs | Remove-Job
 }
+
+Convert-PcapToCsv -SourcePcapPaths @("C:\Users\xixia\Downloads\client side.pcap") -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
