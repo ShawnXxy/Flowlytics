@@ -13,19 +13,24 @@ function Write-Log {
     param (
         [string]$Message,
         [ValidateSet("Info", "Warning", "Error", "Success")]
-        [string]$Level = "Info"
+        [string]$Level = "Info",
+        [string]$JobId = ""
     )
     $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
-    $coloredMessage = switch ($Level) {
-        "Info"    { $Message }
-        "Warning" { Write-Host -ForegroundColor Yellow "[$timestamp UTC] $Message"; $Message }
-        "Error"   { Write-Host -ForegroundColor Red "[$timestamp UTC] $Message"; $Message }
-        "Success" { Write-Host -ForegroundColor Green "[$timestamp UTC] $Message"; $Message }
+    $jobPrefix = if ($JobId) { "[Job-$JobId] " } else { "" }
+    $logMessage = "[$timestamp UTC] [$Level] $jobPrefix $Message"
+    
+    # Write to file if TempLogFile is defined
+    if ($Global:TempLogFile) {
+        Add-Content -Path $Global:TempLogFile -Value $logMessage
     }
-    $logMessage = "[$timestamp UTC] [$Level] $Message"
-    Add-Content -Path $Global:TempLogFile -Value $logMessage
-    if ($Level -eq "Info") {
-        Write-Host $logMessage
+    
+    # Write to console with color
+    switch ($Level) {
+        "Info"    { Write-Host $logMessage }
+        "Warning" { Write-Host $logMessage -ForegroundColor Yellow }
+        "Error"   { Write-Host $logMessage -ForegroundColor Red }
+        "Success" { Write-Host $logMessage -ForegroundColor Green }
     }
 }
 
@@ -265,17 +270,22 @@ For more information, visit: https://tshark.dev/setup/install/
         Write-Log "Found tshark at: $tsharkPath" -Level Success
     }
 
-    # If TargetFolderPath is not provided, use the Downloads folder
+    # Validate TargetFolderPath. if it is not provided, use the Downloads folder
+    Write-Log "Ensuring target directory exists" -Level Info
     if (-not $TargetFolderPath) {
         $TargetFolderPath = [System.Environment]::GetFolderPath("UserProfile") + "\Downloads"
-        Write-Log "Target folder not specified. Using Downloads folder: $TargetFolderPath" -Level Info
+        Write-Log "Target folder not specified or not found. Using Downloads folder: $TargetFolderPath" -Level Info
+    } else {
+        Write-Log "Target folder specified: $TargetFolderPath" -Level Info
     }
 
     # Create the target directory if it doesn't exist
-    Write-Log "Ensuring target directory exists" -Level Info
     if (-not (Test-Path $TargetFolderPath)) {
+        Write-Log "Creating target directory..." -Level Info
         New-Item -ItemType Directory -Path $TargetFolderPath -Force | Out-Null
         Write-Log "Created target directory: $TargetFolderPath" -Level Success
+    } else {
+        Write-Log "Target directory validated: $TargetFolderPath" -Level Info
     }
 
     # If SourceFolderPath is provided, get all .pcap files from that folder
@@ -305,7 +315,12 @@ For more information, visit: https://tshark.dev/setup/install/
 
     # Create and start jobs for each PCAP file
     $jobs = @()
+    $jobCount = 0
+    Write-Log "Starting all jobs needed. Waiting for completion..." -Level Info
     foreach ($SourcePcapPath in $SourcePcapPaths) {
+        $jobCount++
+        Write-Log "Starting job $jobCount of $($SourcePcapPaths.Count) for file: $SourcePcapPath" -Level Info
+        
         $jobScript = {
             param($SourcePcapPath, $TargetFolderPath, $TsharkPath, $WriteLogString, $GetFileSizeString, $ConvertSinglePcapString, $ValidateConversionString, $TempLogFile)
 
@@ -345,16 +360,28 @@ For more information, visit: https://tshark.dev/setup/install/
         
         # Limit the number of concurrent jobs
         while (($jobs | Where-Object { $_.State -eq 'Running' }).Count -ge $MaxThreads) {
-            Start-Sleep -Milliseconds 500
+            Write-Log "[Job-$($job.Id)] Waiting for a job slot to become available. Current running jobs: $(($jobs | Where-Object { $_.State -eq 'Running' }).Count) " -Level Info
+            Start-Sleep -Seconds 5
         }
     }
 
-    # Wait for all jobs to complete
-    $jobs | Wait-Job
+    
+
+    # Wait for all jobs to complete with progress updates
+    $completedJobs = 0
+    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
+        $runningJobs = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
+        $completedJobs = ($jobs | Where-Object { $_.State -eq 'Completed' }).Count
+        Write-Log "Progress: $completedJobs of $($jobs.Count) jobs completed. $runningJobs jobs still running." -Level Info
+        Start-Sleep -Seconds 10
+    }
+
+    Write-Log "All jobs completed. Processing results..." -Level Info
 
     # Process job results
     $conversionResults = @()
     foreach ($job in $jobs) {
+        Write-Log "Processing results for job $($job.Id)" -Level Info
         $jobOutput = Receive-Job -Job $job
         $conversionResults += $jobOutput.Result
         $jobOutput.Logs | ForEach-Object {
@@ -367,6 +394,8 @@ For more information, visit: https://tshark.dev/setup/install/
             }
         }
     }
+
+    Write-Log "All job results processed. Analyzing outcomes..." -Level Info
 
     # Check for any errors in the jobs and process results
     $failedJobs = $jobs | Where-Object { $_.State -eq 'Failed' }
@@ -417,3 +446,6 @@ For more information, visit: https://tshark.dev/setup/install/
     # Clean up jobs
     $jobs | Remove-Job
 }
+
+# sample call
+ Convert-PcapToCsv -SourcePcapPaths "C:\Users\xixia\Downloads\client side.pcap"
