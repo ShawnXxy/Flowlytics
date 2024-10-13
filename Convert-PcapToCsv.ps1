@@ -83,14 +83,15 @@ function Convert-SinglePcap {
         [string]$TsharkPath
     )
 
-    Write-Log "Starting Convert-SinglePcap function" -Level Info
-    Write-Log "Source PCAP: $SourcePcapPath" -Level Info
-    Write-Log "Target Folder: $TargetFolderPath" -Level Info
-    Write-Log "Tshark Path: $TsharkPath" -Level Info
+    $startTime = Get-Date
+
+    Write-Log "[ConvertSinglePcapActor] Starting Convert-SinglePcap: " -Level Info
+    Write-Log "     Source PCAP: $SourcePcapPath" -Level Info
+    Write-Log "     Target Folder: $TargetFolderPath" -Level Info
 
     # Check if source file exists
     if (-not (Test-Path $SourcePcapPath)) {
-        Write-Log "Warning: Source file not found: $SourcePcapPath" -Level Warning
+        Write-Log "[ConvertSinglePcapActor] Warning: Source file not found: $SourcePcapPath" -Level Warning
         return @{
             Source = $SourcePcapPath
             Target = $null
@@ -98,22 +99,22 @@ function Convert-SinglePcap {
             Reason = "Source file not found"
         }
     }
-    Write-Log "Source file exists" -Level Info
+    Write-Log "[ConvertSinglePcapActor] Source file exists" -Level Info
 
     # Log source file size
     $sourceSize = Get-FileSize -FilePath $SourcePcapPath
-    Write-Log "Source PCAP file size: $sourceSize" -Level Info
+    Write-Log "[ConvertSinglePcapActor] Source PCAP file size: $sourceSize" -Level Info
 
     $sourceFileName = [System.IO.Path]::GetFileNameWithoutExtension($SourcePcapPath)
     $TargetCsvPath = Join-Path $TargetFolderPath "$sourceFileName.csv"
-    Write-Log "Target CSV Path: $TargetCsvPath" -Level Info
+    Write-Log "[ConvertSinglePcapActor] Target CSV Path: $TargetCsvPath" -Level Info
 
     # Convert pcap to csv using tshark
     try {
-        Write-Log "Starting PCAP to CSV conversion for: $SourcePcapPath" -Level Info
+        Write-Log "[ConvertSinglePcapActor] Starting PCAP to CSV conversion for: $SourcePcapPath" -Level Info
 
         # Convert pcap to csv
-        Write-Log "Preparing tshark arguments for conversion" -Level Info
+        Write-Log "[ConvertSinglePcapActor] Preparing tshark arguments for conversion" -Level Info
         $tsharkArgs = @(
             "-r", $SourcePcapPath,
             "-T", "fields",
@@ -128,47 +129,51 @@ function Convert-SinglePcap {
             "-E", "quote=d",
             "-E", "separator=,"
         )
-        Write-Log "Tshark arguments: $($tsharkArgs -join ' ')" -Level Info
+        Write-Log "[ConvertSinglePcapActor] Tshark arguments: $($tsharkArgs -join ' ')" -Level Info
 
-        Write-Log "Starting tshark conversion process" -Level Info
+        Write-Log "[ConvertSinglePcapActor] Starting tshark conversion process" -Level Info
         $output = & $TsharkPath $tsharkArgs
-        Write-Log "Tshark execution completed" -Level Info
+        Write-Log "[ConvertSinglePcapActor] Tshark execution completed" -Level Info
         
         if ($output) {
             Write-Log "Tshark produced output. Writing to file: $TargetCsvPath" -Level Info
             $output | Out-File -FilePath $TargetCsvPath -Encoding utf8
-            Write-Log "File write operation completed" -Level Info
+            Write-Log "[ConvertSinglePcapActor] File write operation completed" -Level Info
             
             # Check if the file was actually created
             if (Test-Path $TargetCsvPath) {
                 $targetSize = Get-FileSize -FilePath $TargetCsvPath
-                Write-Log "Conversion completed successfully." -Level Success
-                Write-Log "Source: $SourcePcapPath" -Level Info
-                Write-Log "Target: $TargetCsvPath" -Level Info
-                Write-Log "Generated CSV file size: $targetSize" -Level Info
+                Write-Log "[ConvertSinglePcapActor] Conversion completed successfully." -Level Success
+                Write-Log "[ConvertSinglePcapActor] Source: $SourcePcapPath" -Level Info
+                Write-Log "[ConvertSinglePcapActor] Target: $TargetCsvPath" -Level Info
+                Write-Log "[ConvertSinglePcapActor] Generated CSV file size: $targetSize" -Level Info
                 
                 # Add validation step
-                Write-Log "Starting validation" -Level Info
+                Write-Log "[ConvertSinglePcapActor] Starting validation" -Level Info
                 Validate-Conversion -SourcePcapPath $SourcePcapPath -TargetCsvPath $TargetCsvPath -TsharkPath $TsharkPath
-                Write-Log "Validation completed" -Level Info
+                Write-Log "[ConvertSinglePcapActor] Validation completed" -Level Info
             } else {
                 throw "CSV file was not created at the expected location: $TargetCsvPath"
             }
         }
         else {
-            Write-Log "Tshark did not produce any output" -Level Error
+            Write-Log "[ConvertSinglePcapActor] Tshark did not produce any output" -Level Error
             throw "tshark did not produce any output"
         }
 
         # Verify the CSV file is not empty
         $fileInfo = Get-Item $TargetCsvPath
         if ($fileInfo.Length -eq 0) {
-            Write-Log "Generated CSV file is empty" -Level Error
+            Write-Log "[ConvertSinglePcapActor] Generated CSV file is empty" -Level Error
             throw "The generated CSV file is empty"
         }
-        Write-Log "CSV file is not empty. Size: $($fileInfo.Length) bytes" -Level Info
+        Write-Log "[ConvertSinglePcapActor] CSV file is not empty. Size: $($fileInfo.Length) bytes" -Level Info
     }
     catch {
+        $endTime = Get-Date
+        $timeSpan = $endTime - $startTime
+        $timeUsed = [math]::Round($timeSpan.TotalSeconds, 2)
+
         Write-Log "Error: An error occurred during the conversion of $SourcePcapPath" -Level Error
         Write-Log "Error details: $_" -Level Error
         Write-Log "Error stack trace: $($_.ScriptStackTrace)" -Level Error
@@ -177,16 +182,22 @@ function Convert-SinglePcap {
             Target = $null
             Status = "Failed"
             Reason = $_.Exception.Message
+            TimeUsed = $timeUsed
         }
     }
 
     Write-Log "Finished processing file: $SourcePcapPath" -Level Info
+
+    $endTime = Get-Date
+    $timeSpan = $endTime - $startTime
+    $timeUsed = [math]::Round($timeSpan.TotalSeconds, 2)
 
     # Return conversion result
     return @{
         Source = $SourcePcapPath
         Target = $TargetCsvPath
         Status = "Success"
+        TimeUsed = $timeUsed
     }
 }
 
@@ -197,18 +208,18 @@ function Validate-Conversion {
         [string]$TsharkPath
     )
 
-    Write-Log "Validating conversion for $SourcePcapPath" -Level Info
+    Write-Log "[ValidateConversionActor] Validating conversion for $SourcePcapPath" -Level Info
 
     # Count packets in PCAP file
     $pcapPacketCount = & $TsharkPath -r $SourcePcapPath -T fields -e frame.number | Measure-Object -Line | Select-Object -ExpandProperty Lines
-    Write-Log "PCAP file contains $pcapPacketCount packets" -Level Info
+    Write-Log "[ValidateConversionActor] PCAP file contains $pcapPacketCount packets" -Level Info
 
     # Count lines in CSV file (excluding header)
     $csvLineCount = (Get-Content $TargetCsvPath | Measure-Object -Line).Lines - 1
-    Write-Log "CSV file contains $csvLineCount lines (excluding header)" -Level Info
+    Write-Log "[ValidateConversionActor] CSV file contains $csvLineCount lines (excluding header)" -Level Info
 
     if ($pcapPacketCount -ne $csvLineCount) {
-        Write-Log "Warning: Packet count mismatch. PCAP: $pcapPacketCount, CSV: $csvLineCount" -Level Warning
+        Write-Log "[ValidateConversionActor] Warning: Packet count mismatch. PCAP: $pcapPacketCount, CSV: $csvLineCount" -Level Warning
     }
 
     # Check for essential fields
@@ -217,18 +228,54 @@ function Validate-Conversion {
     $missingFields = $essentialFields | Where-Object { $csvHeader -notmatch $_ }
     
     if ($missingFields) {
-        Write-Log "Warning: Missing essential fields in CSV: $($missingFields -join ', ')" -Level Warning
+        Write-Log "[ValidateConversionActor] Warning: Missing essential fields in CSV: $($missingFields -join ', ')" -Level Warning
     }
 
 }
 
+# Add this new function to format and display the results table
+function Format-ConversionResultsTable {
+    param (
+        [array]$Results
+    )
+    $table = @()
+    foreach ($result in $Results) {
+        $sourceSize = Get-FileSize -FilePath $result.Source
+        $sourceName = Split-Path $result.Source -Leaf
+        $sourcePath = Split-Path $result.Source -Parent
+        
+        if ($result.Status -eq "Success") {
+            $targetSize = Get-FileSize -FilePath $result.Target
+            $targetName = Split-Path $result.Target -Leaf
+            $targetPath = Split-Path $result.Target -Parent
+            $timeUsed = "$($result.TimeUsed) seconds"
+        } else {
+            $targetSize = "N/A"
+            $targetName = "N/A"
+            $targetPath = "N/A"
+            $timeUsed = "N/A"
+        }
+        
+        $table += [PSCustomObject]@{
+            'Job ID' = $result.JobId
+            'Source File' = $sourceName
+            'Source Path' = $sourcePath
+            'Source Size' = $sourceSize
+            'Target File' = $targetName
+            'Target Path' = $targetPath
+            'Target Size' = $targetSize
+            'Time Used' = $timeUsed
+            'Status' = $result.Status
+        }
+    }
+    
+    $table | Format-Table -AutoSize -Wrap
+}
+
 function Convert-PcapToCsv {
     param (
-        [Parameter(Mandatory = $true, ParameterSetName = "Files")]
-        [string[]]$SourcePcapPaths,
-
-        [Parameter(Mandatory = $true, ParameterSetName = "Folder")]
-        [string]$SourceFolderPath,
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$SourcePath,
 
         [Parameter(Mandatory = $false)]
         [string]$TargetFolderPath
@@ -270,29 +317,43 @@ For more information, visit: https://tshark.dev/setup/install/
         Write-Log "Found tshark at: $tsharkPath" -Level Success
     }
 
-    # Validate TargetFolderPath. if it is not provided, use the Downloads folder
-    Write-Log "Ensuring target directory exists" -Level Info
+    # Determine if SourcePath is a file or folder
+    if (Test-Path $SourcePath -PathType Leaf) {
+        if ($SourcePath -like "*.pcap") {
+            $SourcePcapPaths = @($SourcePath)
+            Write-Log "Source is a single PCAP file: $SourcePath" -Level Info
+        } else {
+            Write-Log "Error: Source file is not a .pcap file: $SourcePath" -Level Error
+            return
+        }
+    }
+    elseif (Test-Path $SourcePath -PathType Container) {
+        Write-Log "Searching for .pcap files in folder: $SourcePath" -Level Info
+        $SourcePcapPaths = Get-ChildItem -Path $SourcePath -Filter "*.pcap" -Recurse | Select-Object -ExpandProperty FullName
+        if ($SourcePcapPaths.Count -eq 0) {
+            Write-Log "Error: No .pcap files found in the specified folder: $SourcePath" -Level Error
+            return
+        }
+        Write-Log "Found $($SourcePcapPaths.Count) .pcap files in $SourcePath" -Level Info
+    }
+    else {
+        Write-Log "Error: The specified source path does not exist or is not accessible: $SourcePath" -Level Error
+        return
+    }
+
+    # Validate TargetFolderPath
     if (-not $TargetFolderPath) {
         $TargetFolderPath = [System.Environment]::GetFolderPath("UserProfile") + "\Downloads"
-        Write-Log "Target folder not specified or not found. Using Downloads folder: $TargetFolderPath" -Level Info
+        Write-Log "Target folder path not specified or not found. Using Downloads directory: $TargetFolderPath" -Level Info
     } else {
-        Write-Log "Target folder specified: $TargetFolderPath" -Level Info
+        Write-Log "Target folder pathspecified: $TargetFolderPath" -Level Info
     }
 
     # Create the target directory if it doesn't exist
     if (-not (Test-Path $TargetFolderPath)) {
-        Write-Log "Creating target directory..." -Level Info
+        Write-Log "Creating target folder..." -Level Info
         New-Item -ItemType Directory -Path $TargetFolderPath -Force | Out-Null
         Write-Log "Created target directory: $TargetFolderPath" -Level Success
-    } else {
-        Write-Log "Target directory validated: $TargetFolderPath" -Level Info
-    }
-
-    # If SourceFolderPath is provided, get all .pcap files from that folder
-    if ($PSCmdlet.ParameterSetName -eq "Folder") {
-        Write-Log "Searching for .pcap files in folder: $SourceFolderPath" -Level Info
-        $SourcePcapPaths = Get-ChildItem -Path $SourceFolderPath -Filter "*.pcap" | Select-Object -ExpandProperty FullName
-        Write-Log "Found $($SourcePcapPaths.Count) .pcap files" -Level Info
     }
 
     # Confirm with user if multiple files are to be converted
@@ -311,12 +372,11 @@ For more information, visit: https://tshark.dev/setup/install/
 
     # Determine the number of threads to use
     $MaxThreads = [Math]::Min($SourcePcapPaths.Count, [Environment]::ProcessorCount)
-    Write-Log "Using $MaxThreads thread(s) for conversion" -Level Info
+    Write-Log "Using $MaxThreads thread(s) for conversion because there are $($SourcePcapPaths.Count) pcap files to convert" -Level Info
 
     # Create and start jobs for each PCAP file
     $jobs = @()
     $jobCount = 0
-    Write-Log "Starting all jobs needed. Waiting for completion..." -Level Info
     foreach ($SourcePcapPath in $SourcePcapPaths) {
         $jobCount++
         Write-Log "Starting job $jobCount of $($SourcePcapPaths.Count) for file: $SourcePcapPath" -Level Info
@@ -340,6 +400,7 @@ For more information, visit: https://tshark.dev/setup/install/
                 [System.IO.Path]::GetDirectoryName($SourcePcapPath)
             }
 
+            Write-Log "Executing Convert-SinglePcap. Starting conversion for file: $SourcePcapPath" -Level Info
             $result = Convert-SinglePcap -SourcePcapPath $SourcePcapPath -TargetFolderPath $fileTargetFolder -TsharkPath $TsharkPath
             return @{
                 Result = $result
@@ -357,24 +418,11 @@ For more information, visit: https://tshark.dev/setup/install/
             ${function:Validate-Conversion}.ToString(),
             $Global:TempLogFile
         )
-        
-        # Limit the number of concurrent jobs
-        while (($jobs | Where-Object { $_.State -eq 'Running' }).Count -ge $MaxThreads) {
-            Write-Log "[Job-$($job.Id)] Waiting for a job slot to become available. Current running jobs: $(($jobs | Where-Object { $_.State -eq 'Running' }).Count) " -Level Info
-            Start-Sleep -Seconds 5
-        }
+
     }
 
-    
-
-    # Wait for all jobs to complete with progress updates
-    $completedJobs = 0
-    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
-        $runningJobs = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
-        $completedJobs = ($jobs | Where-Object { $_.State -eq 'Completed' }).Count
-        Write-Log "Progress: $completedJobs of $($jobs.Count) jobs completed. $runningJobs jobs still running." -Level Info
-        Start-Sleep -Seconds 10
-    }
+    # Monitor jobs
+    Monitor-ConversionJobs -Jobs $jobs
 
     Write-Log "All jobs completed. Processing results..." -Level Info
 
@@ -383,12 +431,13 @@ For more information, visit: https://tshark.dev/setup/install/
     foreach ($job in $jobs) {
         Write-Log "Processing results for job $($job.Id)" -Level Info
         $jobOutput = Receive-Job -Job $job
+        $jobOutput.Result.JobId = $job.Id  # Add JobId to the result
         $conversionResults += $jobOutput.Result
         $jobOutput.Logs | ForEach-Object {
             if ($_ -match '\[(Info|Warning|Error|Success)\]') {
                 $level = $matches[1]
                 $message = $_ -replace "\[$level\] ", ''
-                Write-Log $message -Level $level
+                Write-Log $message -Level $level -JobId $job.Id
             } else {
                 Write-Host $_
             }
@@ -410,33 +459,25 @@ For more information, visit: https://tshark.dev/setup/install/
         }
         Write-Log "PCAP to CSV conversion process finished with errors. Some files may not have been converted successfully." -Level Warning
     } else {
-        $successfulConversions = $conversionResults | Where-Object { $_.Status -eq "Success" }
-        if ($successfulConversions) {
-            Write-Log "Successfully converted the following files:" -Level Success
-            $successfulConversions | ForEach-Object {
-                Write-Log "Source: $($_.Source)" -Level Info
-                if ($_.Target) {
-                    Write-Log "Target: $($_.Target)" -Level Info
-                } else {
-                    Write-Log "Target: Not specified (using source directory)" -Level Info
-                }
-            }
-            
-            # Open the target folder(s)
-            $foldersToOpen = $successfulConversions | ForEach-Object { 
-                if ($_.Target) { 
-                    Split-Path -Parent $_.Target 
-                } else { 
-                    Split-Path -Parent $_.Source 
-                }
-            } | Select-Object -Unique
-            
-            foreach ($folder in $foldersToOpen) {
-                Write-Log "Opening folder: $folder" -Level Info
-                Start-Process "explorer.exe" -ArgumentList $folder
-            }
+        Write-Log "PCAP to CSV conversion process finished for all files successfully." -Level Success
+    }
+
+    # Display the results table
+    Write-Log "Conversion Results Summary:" -Level Info
+    Format-ConversionResultsTable -Results $conversionResults
+
+    # Open the target folder(s)
+    $foldersToOpen = $conversionResults | Where-Object { $_.Status -eq "Success" } | ForEach-Object { 
+        if ($_.Target) { 
+            Split-Path -Parent $_.Target 
+        } else { 
+            Split-Path -Parent $_.Source 
         }
-        Write-Log "PCAP to CSV conversion process finished for all files" -Level Success
+    } | Select-Object -Unique
+    
+    foreach ($folder in $foldersToOpen) {
+        Write-Log "Opening folder: $folder" -Level Info
+        Start-Process "explorer.exe" -ArgumentList $folder
     }
 
     # Open the temp log folder
@@ -447,5 +488,26 @@ For more information, visit: https://tshark.dev/setup/install/
     $jobs | Remove-Job
 }
 
+function Monitor-ConversionJobs {
+    param (
+        [array]$Jobs,
+        [int]$IntervalSeconds = 10
+    )
+    $totalJobs = $Jobs.Count
+    $completedJobs = 0
+
+    while ($Jobs | Where-Object { $_.State -eq 'Running' }) {
+        $runningJobs = $Jobs | Where-Object { $_.State -eq 'Running' }
+        $completedJobs = ($Jobs | Where-Object { $_.State -eq 'Completed' }).Count
+
+        $runningJobIds = $runningJobs | ForEach-Object { $_.Id }
+        Write-Log "[StatusCheckActor] Progress: $completedJobs of $totalJobs jobs completed. $($runningJobs.Count) jobs still running. Running job IDs: $($runningJobIds -join ', ')" -Level Info
+        
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+
+    Write-Log "All jobs completed." -Level Success
+}
+
 # sample call
- Convert-PcapToCsv -SourcePcapPaths "C:\Users\xixia\Downloads\client side.pcap"
+ Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\client side.pcap"
