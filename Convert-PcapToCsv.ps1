@@ -417,5 +417,3 @@ For more information, visit: https://tshark.dev/setup/install/
     # Clean up jobs
     $jobs | Remove-Job
 }
-
-Convert-PcapToCsv -SourcePcapPaths @("C:\Users\xixia\Downloads\client side.pcap") -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
