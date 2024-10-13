@@ -22,17 +22,54 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
 
 ### 🚀 Usage
 
-#### Example usage for multiple files
+**In order to run it without downloading the repository, you need to:**
+1. Open Windows PowerShell ISE (in Administrator mode if possible)
+1. Open a New Script window
+1. Paste the following in the script window and run it:
 
-```
-Convert-PcapToCsv -SourcePcapPaths @("C:\Users\xixia\Downloads\client_side1.pcap", "C:\Users\xixia\Downloads\client_side2.pcap") -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
-```
+    ```ps
+    # GitHub raw content URL for the Convert-PcapToCsv.ps1 script
+    $scriptUrl = "https://raw.githubusercontent.com/ShawnXxy/Flowlytics/main/Convert-PcapToCsv.ps1"
 
-#### Example usage for a source folder
+    # Temporary file path to store the downloaded script
+    $tempScriptPath = Join-Path $env:TEMP "Convert-PcapToCsv.ps1"
 
-``` 
-Convert-PcapToCsv -SourceFolderPath "C:\Users\xixia\Downloads\PcapFiles" -TargetFolderPath "C:\Users\xixia\Downloads\ConvertedCSV"
-```
+    try {
+        # Download the script
+        Invoke-WebRequest -Uri $scriptUrl -OutFile $tempScriptPath
+
+        # Check if the file was downloaded successfully
+        if (Test-Path $tempScriptPath) {
+            Write-Host "Script downloaded successfully."
+
+            # Load the script into memory
+            . $tempScriptPath
+
+            # Call the Convert-PcapToCsv function
+            $sourcePath = Read-Host "Enter the path to your PCAP file or folder containing PCAP files"
+            $targetPath = Read-Host "Enter the target folder path (optional, press Enter to use default)"
+
+            if ([string]::IsNullOrWhiteSpace($targetPath)) {
+                Convert-PcapToCsv -SourcePcapPaths $sourcePath
+            } else {
+                Convert-PcapToCsv -SourcePcapPaths $sourcePath -TargetFolderPath $targetPath
+            }
+        } else {
+            Write-Host "Failed to download the script."
+        }
+    } catch {
+        Write-Host "An error occurred: $_"
+    } finally {
+        # Clean up: remove the temporary script file
+        if (Test-Path $tempScriptPath) {
+            Remove-Item $tempScriptPath
+        }
+    }
+
+    # Keep the console window open
+    Read-Host "Press Enter to exit"
+    ```
+
 
 ### ⚠️ Limitations
 
