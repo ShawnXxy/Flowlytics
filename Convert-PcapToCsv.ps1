@@ -101,31 +101,42 @@ function Get-FileSize {
 
 function Validate-SourcePath {
     param (
-        [string]$SourcePath
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [string[]]$SourcePaths
     )
 
-    if (Test-Path $SourcePath -PathType Leaf) {
-        if ($SourcePath -like "*.pcap") {
-            Write-Log "Source is a single PCAP file: $SourcePath" -Level Info
-            return @($SourcePath)
-        } else {
-            Write-Log "Error: Source file is not a .pcap file: $SourcePath" -Level Error
-            return $null
+    begin {
+        $validPcapPaths = @()
+    }
+
+    process {
+        foreach ($SourcePath in $SourcePaths) {
+            if (Test-Path $SourcePath -PathType Leaf) {
+                if ($SourcePath -like "*.pcap") {
+                    Write-Log "Source is a single PCAP file: $SourcePath" -Level Info
+                    $validPcapPaths += $SourcePath
+                } else {
+                    Write-Log "Error: Source file is not a .pcap file: $SourcePath" -Level Error
+                }
+            }
+            elseif (Test-Path $SourcePath -PathType Container) {
+                Write-Log "Searching for .pcap files in folder: $SourcePath" -Level Info
+                $pcapFiles = Get-ChildItem -Path $SourcePath -Filter "*.pcap" -Recurse | Select-Object -ExpandProperty FullName
+                if ($pcapFiles.Count -eq 0) {
+                    Write-Log "Error: No .pcap files found in the specified folder: $SourcePath" -Level Error
+                } else {
+                    Write-Log "Found $($pcapFiles.Count) .pcap files in $SourcePath" -Level Info
+                    $validPcapPaths += $pcapFiles
+                }
+            }
+            else {
+                Write-Log "Error: The specified source path does not exist or is not accessible: $SourcePath" -Level Error
+            }
         }
     }
-    elseif (Test-Path $SourcePath -PathType Container) {
-        Write-Log "Searching for .pcap files in folder: $SourcePath" -Level Info
-        $pcapFiles = Get-ChildItem -Path $SourcePath -Filter "*.pcap" -Recurse | Select-Object -ExpandProperty FullName
-        if ($pcapFiles.Count -eq 0) {
-            Write-Log "Error: No .pcap files found in the specified folder: $SourcePath" -Level Error
-            return $null
-        }
-        Write-Log "Found $($pcapFiles.Count) .pcap files in $SourcePath" -Level Info
-        return $pcapFiles
-    }
-    else {
-        Write-Log "Error: The specified source path does not exist or is not accessible: $SourcePath" -Level Error
-        return $null
+
+    end {
+        return $validPcapPaths
     }
 }
 
@@ -356,13 +367,18 @@ function Format-ConversionResultsTable {
         }
     }
     
-    $table | Format-Table -AutoSize -Wrap
+    # Format the table as a string
+    $tableString = $table | Format-Table -AutoSize -Wrap | Out-String
+
+    # Write to log file
+    Write-Log "Conversion Results Table:" -Level Info
+    Write-Log $tableString -Level Info
 }
 
 function Convert-PcapToCsv {
     param (
         [Parameter(Mandatory = $true, Position = 0)]
-        [string]$SourcePath,
+        [string[]]$SourcePath,
 
         [Parameter(Mandatory = $false)]
         [string]$TargetFolderPath
@@ -402,9 +418,10 @@ For more information, visit: https://tshark.dev/setup/install/
     }
     Write-Log "Found tshark at: $tsharkPath" -Level Success
 
-    # Validate source path
-    $SourcePcapPaths = Validate-SourcePath -SourcePath $SourcePath
-    if (-not $SourcePcapPaths) {
+    # Validate source paths
+    $SourcePcapPaths = $SourcePath | Validate-SourcePath
+    if ($SourcePcapPaths.Count -eq 0) {
+        Write-Log "No valid PCAP files found in the specified source path(s)." -Level Error
         return
     }
 
@@ -487,7 +504,7 @@ For more information, visit: https://tshark.dev/setup/install/
         Write-Log "Started job (PowerShell Job ID: $($job.Id)) for file: $SourcePcapPath" -Level Info
     }
 
-    # Monitor-ConversionJobs -Jobs $jobs -IntervalSeconds 10
+    Monitor-ConversionJobs -Jobs $jobs -IntervalSeconds 10
 
     # Wait for all jobs to complete
     $jobs | Wait-Job 
@@ -535,7 +552,6 @@ For more information, visit: https://tshark.dev/setup/install/
     }
 
     # Display the results table
-    Write-Log "Conversion Results Summary:" -Level Info
     Format-ConversionResultsTable -Results $conversionResults
 
     # Open the target folder(s)
@@ -559,8 +575,3 @@ For more information, visit: https://tshark.dev/setup/install/
     # Clean up jobs
     $jobs | Remove-Job
 }
-
-
-
-# sample call
- Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\client side.pcap"
