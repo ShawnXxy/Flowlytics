@@ -210,16 +210,31 @@ function Convert-SinglePcap {
         Write-Log "[ConvertSinglePcapActor] Starting PCAP to CSV conversion for: $SourcePcapPath" -Level Info
 
         # Convert pcap to csv
+        
         Write-Log "[ConvertSinglePcapActor] Preparing tshark arguments for conversion" -Level Info
         $tsharkArgs = @(
             "-r", $SourcePcapPath,
             "-T", "fields",
             "-e", "frame.number",
             "-e", "frame.time",
+            "-e", "frame.time_delta_displayed",
             "-e", "ip.src",
             "-e", "ip.dst",
+            "-e", "ip.id",
             "-e", "_ws.col.Protocol",
+            "-e", "tcp.seq",
+            "-e", "tcp.ack",
             "-e", "frame.len",
+            "-e", "tcp.srcport",
+            "-e", "tcp.dstport",
+            "-e", "udp.srcport",
+            "-e", "udp.dstport",
+            "-e", "tcp.analysis.ack_rtt",
+            "-e", "frame.protocols",
+            "-e", "_ws.col.Info",
+            "-e", "eth.src",
+            "-e", "eth.dst",
+            "-e", "ipv6.src",
             "-e", "_ws.col.Info",
             "-E", "header=y",
             "-E", "quote=d",
