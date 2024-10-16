@@ -30,29 +30,29 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
     ```ps
     # GitHub raw content URL for the Convert-PcapToCsv.ps1 script
     $scriptUrl = "https://raw.githubusercontent.com/ShawnXxy/Flowlytics/main/Convert-PcapToCsv.ps1"
-
+    
     # Temporary file path to store the downloaded script
     $tempScriptPath = Join-Path $env:TEMP "Convert-PcapToCsv.ps1"
-
+    
     try {
         # Download the script
         Invoke-WebRequest -Uri $scriptUrl -OutFile $tempScriptPath
-
+    
         # Check if the file was downloaded successfully
         if (Test-Path $tempScriptPath) {
             Write-Host "Script downloaded successfully."
-
+    
             # Load the script into memory
             . $tempScriptPath
-
+    
             # Call the Convert-PcapToCsv function
             $sourcePath = Read-Host "Enter the path to your PCAP file or folder containing PCAP files"
             $targetPath = Read-Host "Enter the target folder path (optional, press Enter to use default)"
-
+    
             if ([string]::IsNullOrWhiteSpace($targetPath)) {
-                Convert-PcapToCsv -SourcePcapPaths $sourcePath
+                Convert-PcapToCsv -SourcePath $sourcePath
             } else {
-                Convert-PcapToCsv -SourcePcapPaths $sourcePath -TargetFolderPath $targetPath
+                Convert-PcapToCsv -SourcePath $sourcePath -TargetFolderPath $targetPath
             }
         } else {
             Write-Host "Failed to download the script."
@@ -65,7 +65,7 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
             Remove-Item $tempScriptPath
         }
     }
-
+    
     # Keep the console window open
     Read-Host "Press Enter to exit"
     ```
