@@ -46,7 +46,7 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
             . $tempScriptPath
     
             # Call the Convert-PcapToCsv function
-            $sourcePath = Read-Host "Enter the path to your PCAP file or folder containing PCAP files"
+            $sourcePath = Read-Host "Enter the path to your PCAP file or folder containing PCAP files (No quotes)"
             $targetPath = Read-Host "Enter the target folder path (optional, press Enter to use default)"
     
             if ([string]::IsNullOrWhiteSpace($targetPath)) {
