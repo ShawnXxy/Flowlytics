@@ -70,6 +70,17 @@ This project is inspired by the work of [qliu95114](https://github.com/qliu95114
     Read-Host "Press Enter to exit"
     ```
 
+Convert-PcapToCsv parallel version, There is a `main.ps1` powershell provide a parameter to determined how many workers will engage with this converting action.
+
+```
+.\main.ps1 4
+```
+
+or execute `main.ps1` directly, As default it will convert pcap file to csv by 2 worker.
+
+```
+.\main.ps1
+```
 
 ### ⚠️ Limitations
 
