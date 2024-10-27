@@ -76,15 +76,16 @@ function Monitor-ConversionJobs {
         [array]$Jobs,
         [int]$IntervalSeconds = 10
     )
-    $totalJobs = $Jobs.Count
+    $countTotalJobs = $Jobs.Count
     $completedJobs = 0
 
     while ($Jobs | Where-Object { $_.State -eq 'Running' }) {
         $runningJobs = $Jobs | Where-Object { $_.State -eq 'Running' }
-        $completedJobs = ($Jobs | Where-Object { $_.State -eq 'Completed' }).Count
+        $completedJobs = $Jobs | Where-Object { $_.State -eq 'Completed' }
+        $pendingJobs = $countTotalJobs - $runningJobs.Count - $completedJobs.Count
 
         $runningJobIds = $runningJobs | ForEach-Object { $_.Id }
-        Write-Log "[StatusCheckActor] Progress: $completedJobs of $totalJobs jobs completed. $($runningJobs.Count) jobs still running. Running job IDs: $($runningJobIds -join ', ')" -Level Info
+        Write-Log "[StatusCheckActor] Progress: $($completedJobs.Count) of $countTotalJobs jobs completed. $($runningJobs.Count) jobs still running. Running job IDs: $($runningJobIds -join ', '). Currently $pendingJobs job(s) pending. " -Level Info
         
         Start-Sleep -Seconds $IntervalSeconds
     }
@@ -604,14 +605,29 @@ For more information, visit: https://tshark.dev/setup/install/
     }
 
     # Determine the number of threads to use
-    $MaxThreads = [Math]::Min([Math]::Min($SourcePcapPaths.Count, [Environment]::ProcessorCount), $MaxConcurrentJobs)
-    Write-Log "Using $MaxThreads thread(s) for conversion because there is/are $($SourcePcapPaths.Count) .pcap files to convert" -Level Info
+    $MaxThreads = $SourcePcapPaths.Count
+    Write-Log "Need $MaxThreads thread(s) for conversion because there is/are $($SourcePcapPaths.Count) .pcap files to convert" -Level Info
+    if ($MaxThreads -ge $MaxConcurrentJobs) {
+        $MaxThreads = $MaxConcurrentJobs
+        Write-Log "Using $MaxThreads thread(s) for conversion to convert as max allowed." -Level Info
+    } else {
+        $MaxThreads = [Math]::Min([Math]::Min($SourcePcapPaths.Count, [Environment]::ProcessorCount), $MaxConcurrentJobs)
+        Write-Log "Using $MaxThreads thread(s) for conversion because there is/are $($SourcePcapPaths.Count) .pcap files to convert" -Level Info
+    }
 
     # Create and start jobs for each PCAP file
     $jobs = @()
     foreach ($SourcePcapPath in $SourcePcapPaths) {
+        # Wait for available slots if the number of running jobs reaches MaxConcurrentJobs
+        while ($jobs.Count -ge $MaxConcurrentJobs) {
+                        
+            # Monitor and remove completed jobs from the list
+            $jobs = $jobs | Where-Object { $_.State -eq 'Running' }
+            Start-Sleep -Seconds 1
+        }
+
         Write-Log "Starting job for file: $SourcePcapPath" -Level Info
-        
+                
         $jobScript = {
             param($SourcePcapPath, $TargetFolderPath, $TsharkPath, $WriteLogString, $GetFileSizeString, $ConvertSinglePcapString, $ValidateConversionString, $TempLogFile)
 
@@ -651,6 +667,7 @@ For more information, visit: https://tshark.dev/setup/install/
             ${function:Validate-Conversion}.ToString(),
             $Global:TempLogFile
         )
+
         $jobs += $job
         Write-Log "Started job (PowerShell Job ID: $($job.Id)) for file: $SourcePcapPath" -Level Info
     }
@@ -684,7 +701,7 @@ For more information, visit: https://tshark.dev/setup/install/
         }
     }
 
-    Write-Log "All job results processed. Analyzing outcomes..." -Level Info
+    Write-Log "All job results processed. Validating outcomes..." -Level Info
 
     # Check for any errors in the jobs and process results
     $failedJobs = $jobs | Where-Object { $_.State -eq 'Failed' }
@@ -727,4 +744,4 @@ For more information, visit: https://tshark.dev/setup/install/
     $jobs | Remove-Job
 }
 
-Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\dmp1.pcap"
+Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\dmp1-split"
