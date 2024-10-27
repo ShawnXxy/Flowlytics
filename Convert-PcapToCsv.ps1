@@ -145,9 +145,23 @@ function Validate-TargetPath {
         [string]$TargetPath
     )
 
+    # If no target path is specified, set the default path
     if (-not $TargetPath) {
-        $TargetPath = [System.Environment]::GetFolderPath("UserProfile") + "\Downloads"
-        Write-Log "Target path not specified. Using default Downloads folder: $TargetPath" -Level Info
+        $TargetPath = Join-Path ([System.Environment]::GetFolderPath("UserProfile") + "\Downloads") "Flowlytics_Output"
+        Write-Log "Target path not specified. Attempting to create default folder: $TargetPath" -Level Info
+        
+        # Attempt to create the default directory
+        try {
+            if (-not (Test-Path $TargetPath)) {
+                New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+                Write-Log "Successfully created directory: $TargetPath" -Level Success
+            } else {
+                Write-Log "Directory already exists: $TargetPath" -Level Info
+            }
+        } catch {
+            Write-Log "Error creating directory: $_" -Level Error
+            return $null
+        }
     }
     elseif (Test-Path $TargetPath -PathType Container) {
         Write-Log "Target is a directory: $TargetPath" -Level Info
@@ -158,10 +172,17 @@ function Validate-TargetPath {
         Write-Log "Using parent directory as target: $TargetPath" -Level Info
     }
     else {
-        Write-Log "Invalid target path. Creating new directory: $TargetPath" -Level Warning
-        New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+        Write-Log "Invalid target path. Attempting to create new directory: $TargetPath" -Level Warning
+        try {
+            New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+            Write-Log "Successfully created directory: $TargetPath" -Level Success
+        } catch {
+            Write-Log "Error creating directory: $_" -Level Error
+            return $null
+        }
     }
 
+    # Check if the target path is accessible
     if (-not (Test-Path $TargetPath)) {
         Write-Log "Error: Unable to create or access target directory: $TargetPath" -Level Error
         return $null
@@ -170,6 +191,69 @@ function Validate-TargetPath {
     Write-Log "Target folder: $TargetPath" -Level Info
     return $TargetPath
 }
+
+function Split-LargePcap {
+    param (
+        [string]$SourcePcapPath,
+        [string]$WiresharkPath,
+        [int]$MaxPackets = 3000000  # Set the maximum packets per file
+    )
+
+    Write-Log "[SplitLargePcapActor] Starting to split large PCAP file: $SourcePcapPath" -Level Info
+    $sourceFileName = [System.IO.Path]::GetFileNameWithoutExtension($SourcePcapPath)
+    $sourceDir = [System.IO.Path]::GetDirectoryName($SourcePcapPath)
+    $splitDir = Join-Path $sourceDir "$sourceFileName-split"
+
+    if (-not (Test-Path $splitDir)) {
+        New-Item -ItemType Directory -Path $splitDir | Out-Null
+        Write-Log "[SplitLargePcapActor] Created split directory: $splitDir" -Level Info
+    }
+
+    $editcapPath = Join-Path $WiresharkPath "editcap.exe"
+    if (-not (Test-Path $editcapPath)) {
+        Write-Log "[SplitLargePcapActor] Error: editcap.exe not found at $editcapPath" -Level Error
+        return $null
+    }
+
+    $splitFilePattern = Join-Path $splitDir "${sourceFileName}_flowlytics_chunk_"
+
+    $splitArgs = @(
+        "-c", $MaxPackets,  # Use the maximum packets per file
+        $SourcePcapPath,
+        "$splitFilePattern.pcap"
+    )
+
+    Write-Log "[SplitLargePcapActor] Executing editcap to split file. Command: $editcapPath $($splitArgs -join ' ')" -Level Info
+    $output = & $editcapPath $splitArgs 2>&1
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "[SplitLargePcapActor] Error splitting PCAP file: $output" -Level Error
+        return $null
+    }
+
+    $splitFiles = Get-ChildItem -Path $splitDir -Filter "*.pcap"
+    
+    if ($splitFiles.Count -eq 0) {
+        Write-Log "[SplitLargePcapActor] Error: No split files were created." -Level Error
+        return $null
+    }
+    
+    Write-Log "[SplitLargePcapActor] Split complete. Created $($splitFiles.Count) files:" -Level Success
+    $totalSize = 0
+    $splitFiles | ForEach-Object {
+        $fileSize = $_.Length / 1MB
+        $totalSize += $fileSize
+        $fileSizeFormatted = "{0:N2} MB" -f $fileSize
+        Write-Log "  - $($_.Name) ($fileSizeFormatted)" -Level Info
+    }
+    
+    $originalSize = (Get-Item $SourcePcapPath).Length / 1MB
+    Write-Log "[SplitLargePcapActor] Original file size: $("{0:N2} MB" -f $originalSize)" -Level Info
+    Write-Log "[SplitLargePcapActor] Total size of split files: $("{0:N2} MB" -f $totalSize)" -Level Info
+
+    return $splitFiles.FullName
+}
+
 
 
 function Convert-SinglePcap {
@@ -198,11 +282,27 @@ function Convert-SinglePcap {
     Write-Log "[ConvertSinglePcapActor] Source file exists" -Level Info
 
     # Log source file size
-    $sourceSize = Get-FileSize -FilePath $SourcePcapPath
-    Write-Log "[ConvertSinglePcapActor] Source PCAP file size: $sourceSize" -Level Info
+    try {
+        $sourceSize = Get-FileSize -FilePath $SourcePcapPath
+        Write-Log "[ConvertSinglePcapActor] Source PCAP file size: $sourceSize" -Level Info
+    } catch {
+        Write-Log "[ConvertSinglePcapActor] Error getting file size: $_" -Level Error
+        return @{
+            Source = $SourcePcapPath
+            Target = $null
+            Status = "Failed"
+            Reason = "Unable to read source file size"
+        }
+    }
 
     $sourceFileName = [System.IO.Path]::GetFileNameWithoutExtension($SourcePcapPath)
-    $TargetCsvPath = Join-Path $TargetFolderPath "$sourceFileName.csv"
+    $isSplitFile = $sourceFileName -match "_flowlytics_chunk_\d+$"
+    if ($isSplitFile) {
+        $originalFileName = $sourceFileName -replace "_chunk_\d+$", ""
+        $TargetCsvPath = Join-Path $TargetFolderPath "$sourceFileName.csv"
+    } else {
+        $TargetCsvPath = Join-Path $TargetFolderPath "$sourceFileName.csv"
+    }
     Write-Log "[ConvertSinglePcapActor] Target CSV Path: $TargetCsvPath" -Level Info
 
     # Convert pcap to csv using tshark
@@ -215,6 +315,7 @@ function Convert-SinglePcap {
         $tsharkArgs = @(
             "-r", $SourcePcapPath,
             "-T", "fields",
+            "-e", "frame.time_epoch",
             "-e", "frame.number",
             "-e", "frame.time",
             "-e", "frame.time_delta_displayed",
@@ -235,7 +336,6 @@ function Convert-SinglePcap {
             "-e", "eth.src",
             "-e", "eth.dst",
             "-e", "ipv6.src",
-            "-e", "_ws.col.Info",
             "-E", "header=y",
             "-E", "quote=d",
             "-E", "separator=,"
@@ -243,15 +343,24 @@ function Convert-SinglePcap {
         Write-Log "[ConvertSinglePcapActor] Tshark arguments: $($tsharkArgs -join ' ')" -Level Info
 
         Write-Log "[ConvertSinglePcapActor] Starting tshark conversion process" -Level Info
-        $output = & $TsharkPath $tsharkArgs
+        $output = & $TsharkPath $tsharkArgs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "[ConvertSinglePcapActor] Error during tshark execution: $output" -Level Error
+            throw "Tshark execution failed"
+        }
 
 
         Write-Log "[ConvertSinglePcapActor] Tshark execution completed" -Level Info
         
         if ($output) {
             Write-Log "Tshark produced output. Writing to file: $TargetCsvPath" -Level Info
-            $output | Out-File -FilePath $TargetCsvPath -Encoding utf8
-            Write-Log "[ConvertSinglePcapActor] File write operation completed" -Level Info
+            try {
+                $output | Out-File -FilePath $TargetCsvPath -Encoding utf8 -ErrorAction Stop
+                Write-Log "[ConvertSinglePcapActor] File write operation completed" -Level Info
+            } catch {
+                Write-Log "[ConvertSinglePcapActor] Error writing to CSV file: $_" -Level Error
+                throw "Failed to write output to CSV"
+            }
             
             # Check if the file was actually created
             if (Test-Path $TargetCsvPath) {
@@ -396,7 +505,10 @@ function Convert-PcapToCsv {
         [string[]]$SourcePath,
 
         [Parameter(Mandatory = $false)]
-        [string]$TargetFolderPath
+        [string]$TargetFolderPath,
+
+        [Parameter(Mandatory = $false)]
+        [int]$MaxConcurrentJobs = 8
     )
 
     # Initialize logging environment
@@ -433,8 +545,32 @@ For more information, visit: https://tshark.dev/setup/install/
     }
     Write-Log "Found tshark at: $tsharkPath" -Level Success
 
-    # Validate source paths
-    $SourcePcapPaths = $SourcePath | Validate-SourcePath
+    # Find Wireshark installation path
+    $wiresharkPath = Split-Path $tsharkPath -Parent
+    Write-Log "Wireshark installation path: $wiresharkPath" -Level Info
+    
+    # Validate source paths and split large files if necessary
+    $SourcePcapPaths = @()
+    foreach ($path in $SourcePath) {
+        $validatedPaths = Validate-SourcePath -SourcePaths $path
+        foreach ($validPath in $validatedPaths) {
+            $fileSize = (Get-Item $validPath).Length / 1MB
+            if ($fileSize -gt 500) {
+                Write-Log "Large file detected ($fileSize MB): $validPath" -Level Info
+                $splitFiles = Split-LargePcap -SourcePcapPath $validPath -WiresharkPath $wiresharkPath -MaxSizeMB 500
+                if ($splitFiles) {
+                    Write-Log "Successfully split file into $($splitFiles.Count) parts." -Level Success
+                    $SourcePcapPaths += $splitFiles
+                } else {
+                    Write-Log "Failed to split large file: $validPath. Will process the original file." -Level Warning
+                    $SourcePcapPaths += $validPath
+                }
+            } else {
+                $SourcePcapPaths += $validPath
+            }
+        }
+    }
+
     if ($SourcePcapPaths.Count -eq 0) {
         Write-Log "No valid PCAP files found in the specified source path(s)." -Level Error
         return
@@ -468,7 +604,7 @@ For more information, visit: https://tshark.dev/setup/install/
     }
 
     # Determine the number of threads to use
-    $MaxThreads = [Math]::Min($SourcePcapPaths.Count, [Environment]::ProcessorCount)
+    $MaxThreads = [Math]::Min([Math]::Min($SourcePcapPaths.Count, [Environment]::ProcessorCount), $MaxConcurrentJobs)
     Write-Log "Using $MaxThreads thread(s) for conversion because there is/are $($SourcePcapPaths.Count) .pcap files to convert" -Level Info
 
     # Create and start jobs for each PCAP file
@@ -590,3 +726,5 @@ For more information, visit: https://tshark.dev/setup/install/
     # Clean up jobs
     $jobs | Remove-Job
 }
+
+Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\dmp1.pcap"
