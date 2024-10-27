@@ -743,5 +743,3 @@ For more information, visit: https://tshark.dev/setup/install/
     # Clean up jobs
     $jobs | Remove-Job
 }
-
-Convert-PcapToCsv -SourcePath "C:\Users\xixia\Downloads\dmp1-split"
