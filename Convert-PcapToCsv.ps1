@@ -113,7 +113,7 @@ function Validate-SourcePath {
     process {
         foreach ($SourcePath in $SourcePaths) {
             if (Test-Path $SourcePath -PathType Leaf) {
-                if ($SourcePath -like "*.pcap") {
+                if ($SourcePath -like "*.pcap" -or $SourcePath -like "*.cap") {
                     Write-Log "Source is a single PCAP file: $SourcePath" -Level Info
                     $validPcapPaths += $SourcePath
                 } else {
@@ -306,6 +306,7 @@ function Convert-SinglePcap {
     }
     Write-Log "[ConvertSinglePcapActor] Target CSV Path: $TargetCsvPath" -Level Info
 
+
     # Convert pcap to csv using tshark
     try {
         Write-Log "[ConvertSinglePcapActor] Starting PCAP to CSV conversion for: $SourcePcapPath" -Level Info
@@ -316,24 +317,25 @@ function Convert-SinglePcap {
         $tsharkArgs = @(
             "-r", $SourcePcapPath,
             "-T", "fields",
-            "-e", "frame.time_epoch",
+            # https://www.wireshark.org/docs/dfref/f/frame.html         
             "-e", "frame.number",
+            "-e", "frame.time_epoch",
+            "-e", "frame.time_utc",
             "-e", "frame.time",
-            "-e", "frame.time_delta_displayed",
+            "-e", "frame.time_delta",
+            "-e", "frame.len",
+            "-e", "frame.protocols",
             "-e", "ip.src",
             "-e", "ip.dst",
             "-e", "ip.id",
-            "-e", "_ws.col.Protocol",
+            # https://www.wireshark.org/docs/dfref/t/tcp.html
             "-e", "tcp.seq",
             "-e", "tcp.ack",
-            "-e", "frame.len",
+            "-e", "tcp.stream",          
             "-e", "tcp.srcport",
             "-e", "tcp.dstport",
-            "-e", "udp.srcport",
-            "-e", "udp.dstport",
-            "-e", "tcp.analysis.ack_rtt",
-            "-e", "frame.protocols",
             "-e", "_ws.col.Info",
+            "-e", "_ws.col.Protocol",
             "-e", "eth.src",
             "-e", "eth.dst",
             "-e", "ipv6.src",
